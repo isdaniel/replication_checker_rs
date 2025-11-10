@@ -17,7 +17,6 @@ pub struct ReplicationServer {
 
 impl ReplicationServer {
     pub fn new(config: ReplicationConfig) -> Result<Self> {
-        info!("Connecting to database: {}", config.connection_string);
         let connection = PGConnection::connect(&config.connection_string)?;
         info!("Successfully connected to database server");
 
@@ -260,7 +259,7 @@ impl ReplicationServer {
                 if let Some(relation) = self.state.get_relation(relation_id) {
                     if is_stream {
                         if let Some(xid) = xid {
-                                                        info!("Streaming, Xid: {} ", xid);
+                            info!("Streaming, Xid: {} ", xid);
                         }
                     }
                     info!(
@@ -276,11 +275,9 @@ impl ReplicationServer {
                         };
                         info!("Old {}: ", key_info);
                         self.info_tuple_data(relation, &old_data)?;
-                        info!(" New Row: ");
-                    } else {
-                        info!("New Row: ");
-                    }
+                    } 
 
+                    info!("New Row: ");
                     self.info_tuple_data(relation, &new_tuple_data)?;
                 } else {
                     error!("Received UPDATE for unknown relation: {}", relation_id);
@@ -364,15 +361,21 @@ impl ReplicationServer {
     }
 
     fn info_tuple_data(&self, relation: &RelationInfo, tuple_data: &TupleData) -> Result<()> {
-        for (i, column_data) in tuple_data.columns.iter().enumerate() {
-            if column_data.data_type == 'n' {
-                continue; // Skip NULL values
-            }
+        let line: String = tuple_data
+            .columns
+            .iter()
+            .enumerate()
+            .filter_map(|(i, column_data)| {
+                if column_data.data_type == 'n' || i >= relation.columns.len() {
+                    None
+                } else {
+                    Some(format!("{}: {}", relation.columns[i].column_name, column_data.data))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
 
-            if i < relation.columns.len() {
-                info!("{}: {} ", relation.columns[i].column_name, column_data.data);
-            }
-        }
+        info!("[{}]", line);
         Ok(())
     }
 

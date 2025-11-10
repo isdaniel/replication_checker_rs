@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 /// Information about a table column
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ColumnInfo {
     pub key_flag: i8,
     pub column_name: String,
@@ -15,7 +15,7 @@ pub struct ColumnInfo {
 }
 
 /// Information about a relation (table)
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct RelationInfo {
     pub oid: Oid,
     pub namespace: String,
@@ -26,7 +26,7 @@ pub struct RelationInfo {
 }
 
 /// Data for a single column in a tuple
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ColumnData {
     pub data_type: char, // 'n' for null, 't' for text, 'u' for unchanged
     pub length: i32,
@@ -34,7 +34,7 @@ pub struct ColumnData {
 }
 
 /// Data for a complete row/tuple
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TupleData {
     pub column_count: i16,
     pub columns: Vec<ColumnData>,
@@ -42,7 +42,7 @@ pub struct TupleData {
 }
 
 /// Types of logical replication messages
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ReplicationMessage {
     Begin {
         final_lsn: u64,
@@ -144,7 +144,7 @@ impl Default for ReplicationState {
 }
 
 /// Configuration for the replication checker with validation
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ReplicationConfig {
     pub connection_string: String,
     pub publication_name: String,

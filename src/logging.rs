@@ -22,7 +22,7 @@ use tracing_subscriber::{
 static LOGGING_GUARD: OnceLock<tracing_appender::non_blocking::WorkerGuard> = OnceLock::new();
 
 /// Log output destinations
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum LogOutput {
     /// Log only to console/stderr
     Console,
@@ -52,7 +52,7 @@ impl FromStr for LogOutput {
 }
 
 /// Configuration for logging setup
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LoggingConfig {
     /// Log output destination (console, file, or all)
     pub log_output: LogOutput,
@@ -71,7 +71,7 @@ pub struct LoggingConfig {
 }
 
 /// Log rotation policies
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum LogRotation {
     Never,
     Hourly,
@@ -261,17 +261,4 @@ impl LoggingConfig {
             }
         }
     }
-}
-
-/// Log structured replication event
-#[macro_export]
-macro_rules! log_replication_event {
-    ($level:expr, $event_type:expr, $($field:tt)*) => {
-        tracing::event!(
-            $level,
-            event_type = $event_type,
-            timestamp = %chrono::Utc::now().to_rfc3339(),
-            $($field)*
-        );
-    };
 }
