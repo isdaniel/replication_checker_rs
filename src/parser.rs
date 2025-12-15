@@ -14,16 +14,16 @@ impl MessageParser {
     /// Returns a ReplicationMessage on success
     /// Errors with ReplicationError on failure
     /// please refer to https://www.postgresql.org/docs/current/protocol-logicalrep-message-formats.html#PROTOCOL-LOGICALREP-MESSAGE-FORMATS
-    pub fn parse_wal_message(buffer: &[u8]) -> Result<ReplicationMessage> {
+    pub fn parse_wal_message(buffer: &[u8], in_streaming_txn: bool) -> Result<ReplicationMessage> {
         let mut reader = BufferReader::new(buffer);
         let message_type = reader.skip_message_type()?;
 
-        debug!("Parsing message type: {}", message_type);
+        debug!("Parsing message type: {}, streaming: {}", message_type, in_streaming_txn);
 
         match message_type {
             'B' => Self::parse_begin_message(&mut reader),
             'C' => Self::parse_commit_message(&mut reader),
-            'R' => Self::parse_relation_message(&mut reader),
+            'R' => Self::parse_relation_message(&mut reader, in_streaming_txn),
             'I' => Self::parse_insert_message(&mut reader),
             'U' => Self::parse_update_message(&mut reader),
             'D' => Self::parse_delete_message(&mut reader),
@@ -78,12 +78,20 @@ impl MessageParser {
         })
     }
 
-    fn parse_relation_message(reader: &mut BufferReader) -> Result<ReplicationMessage> {
-        // RELATION message: oid (4) + namespace (null-terminated) + relation_name (null-terminated) + replica_identity (1) + column_count (2) + columns
-        if !reader.has_bytes(7) {
-            // Minimum: 4 + 1 + 1 + 1 + 2 (oid + empty strings + replica_identity + column_count)
+    fn parse_relation_message(reader: &mut BufferReader, in_streaming_txn: bool) -> Result<ReplicationMessage> {
+        // RELATION message in streaming mode: xid (4) + oid (4) + namespace (null-terminated) + relation_name (null-terminated) + replica_identity (1) + column_count (2) + columns
+        // RELATION message in non-streaming mode: oid (4) + namespace (null-terminated) + relation_name (null-terminated) + replica_identity (1) + column_count (2) + columns
+        let min_bytes = if in_streaming_txn { 11 } else { 7 };
+        if !reader.has_bytes(min_bytes) {
             return Err(ReplicationError::parse("Relation message too short"));
         }
+
+        // Read transaction ID if in streaming mode
+        let _xid = if in_streaming_txn {
+            Some(reader.read_u32()?)
+        } else {
+            None
+        };
 
         let oid = reader.read_u32()?;
         let namespace = reader.read_null_terminated_string()?;

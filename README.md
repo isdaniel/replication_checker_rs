@@ -277,16 +277,16 @@ The implementation consists of several well-organized modules:
 
 ## Supported Operations
 
-- ✅ **BEGIN** - Transaction start with structured logging
-- ✅ **COMMIT** - Transaction commit with LSN tracking and timestamps
-- ✅ **INSERT** - Row insertions with JSON data logging
-- ✅ **UPDATE** - Row updates (with old/new value support and change tracking)
-- ✅ **DELETE** - Row deletions with replica identity handling
-- ✅ **TRUNCATE** - Table truncation with cascade and restart identity support
-- ✅ **RELATION** - Table schema information with column metadata
-- ✅ **Streaming Transactions** - Large transaction support (protocol v2)
-- ✅ **Stream Start/Stop/Commit/Abort** - Streaming transaction lifecycle
-- ✅ **Keep-alive** - Connection health monitoring with automatic feedback
+- **BEGIN** - Transaction start with structured logging
+- **COMMIT** - Transaction commit with LSN tracking and timestamps
+- **INSERT** - Row insertions with JSON data logging
+- **UPDATE** - Row updates (with old/new value support and change tracking)
+- **DELETE** - Row deletions with replica identity handling
+- **TRUNCATE** - Table truncation with cascade and restart identity support
+- **RELATION** - Table schema information with column metadata
+- **Streaming Transactions** - Large transaction support (protocol v2)
+- **Stream Start/Stop/Commit/Abort** - Streaming transaction lifecycle
+- **Keep-alive** - Connection health monitoring with automatic feedback
 
 ### Enhanced Logging System
 - **Flexible Output**: Choose between console, file, or both

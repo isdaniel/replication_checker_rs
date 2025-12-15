@@ -110,6 +110,8 @@ pub struct ReplicationState {
     pub received_lsn: u64,
     pub flushed_lsn: u64,
     pub last_feedback_time: std::time::Instant,
+    pub in_streaming_txn: bool,
+    pub streaming_xid: Option<Xid>,
 }
 
 impl ReplicationState {
@@ -119,7 +121,19 @@ impl ReplicationState {
             received_lsn: 0,
             flushed_lsn: 0,
             last_feedback_time: std::time::Instant::now(),
+            in_streaming_txn: false,
+            streaming_xid: None,
         }
+    }
+
+    pub fn start_streaming(&mut self, xid: Xid) {
+        self.in_streaming_txn = true;
+        self.streaming_xid = Some(xid);
+    }
+
+    pub fn stop_streaming(&mut self) {
+        self.in_streaming_txn = false;
+        self.streaming_xid = None;
     }
 
     pub fn add_relation(&mut self, relation: RelationInfo) {

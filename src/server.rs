@@ -189,7 +189,7 @@ impl ReplicationServer {
 
         // Parse the actual logical replication message
         let message_data = &data[reader.position()..];
-        match MessageParser::parse_wal_message(message_data) {
+        match MessageParser::parse_wal_message(message_data, self.state.in_streaming_txn) {
             Ok(message) => {
                 self.process_replication_message(message)?;
             }
@@ -342,18 +342,22 @@ impl ReplicationServer {
 
             ReplicationMessage::StreamStart { xid, .. } => {
                 info!("Opening a streamed block for transaction {}", xid);
+                self.state.start_streaming(xid);
             }
 
             ReplicationMessage::StreamStop => {
                 info!("Stream Stop");
+                self.state.stop_streaming();
             }
 
             ReplicationMessage::StreamCommit { xid, .. } => {
                 info!("Committing streamed transaction {}\n", xid);
+                self.state.stop_streaming();
             }
 
             ReplicationMessage::StreamAbort { xid, .. } => {
                 info!("Aborting streamed transaction {}", xid);
+                self.state.stop_streaming();
             }
         }
 
