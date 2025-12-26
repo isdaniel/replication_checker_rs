@@ -2,11 +2,12 @@
 //! Contains helper functions for byte manipulation, timestamp conversion, and other utilities
 
 use crate::errors::Result;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::DateTime;
 use libpq_sys::*;
 use std::ffi::{CStr, CString};
 use std::ptr;
 use std::time::{ SystemTime, UNIX_EPOCH};
+use tracing::warn;
 
 // PostgreSQL epoch constants
 const PG_EPOCH_OFFSET_SECS: i64 = 946_684_800; // Seconds from 1970 to 2000
@@ -187,14 +188,33 @@ impl PGConnection {
         Ok(PGResult { result })
     }
 
+    fn get_error_message(&self) -> String {
+        unsafe {
+            let error_ptr = PQerrorMessage(self.conn);
+            if error_ptr.is_null() {
+                "Unknown error".to_string()
+            } else {
+                CStr::from_ptr(error_ptr)
+                    .to_string_lossy()
+                    .into_owned()
+                    .trim()
+                    .to_string()
+            }
+        }
+    }
+
     pub fn get_copy_data(&self, timeout: i32) -> Result<Option<Vec<u8>>> {
         let mut buffer: *mut std::os::raw::c_char = ptr::null_mut();
         let result = unsafe { PQgetCopyData(self.conn, &mut buffer, timeout) };
 
         match result {
-            -2 => Err(crate::errors::ReplicationError::protocol(
-                "Copy operation failed",
-            )),
+            -2 => {
+                let error_msg = self.get_error_message();
+                Err(crate::errors::ReplicationError::protocol(format!(
+                    "Copy operation failed: {}",
+                    error_msg
+                )))
+            }
             -1 => Ok(None), // No more data
             0 => Ok(None),  // Timeout or no data available
             len => {
@@ -234,12 +254,27 @@ impl PGConnection {
 
     pub fn flush(&self) -> Result<()> {
         let result = unsafe { PQflush(self.conn) };
-        if result != 0 {
-            return Err(crate::errors::ReplicationError::protocol(
-                "Failed to flush connection",
-            ));
+        match result {
+            0 => Ok(()), // Success or send queue is empty
+            1 => {
+                // Unable to send all data yet - this is normal for large transactions, the data is queued and will be sent later
+                // This happens when the send buffer is full, data will be sent as the buffer drains
+                Ok(())
+            }
+            -1 => {
+                // Actual error occurred - get detailed error message
+                let error_msg = self.get_error_message();
+                Err(crate::errors::ReplicationError::protocol(format!(
+                    "Failed to flush connection: {}",
+                    error_msg
+                )))
+            }
+            _ => {
+                // Unexpected return value
+                warn!("PQflush returned unexpected value: {}", result);
+                Ok(())
+            }
         }
-        Ok(())
     }
 }
 

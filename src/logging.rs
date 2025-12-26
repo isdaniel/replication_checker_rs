@@ -2,7 +2,6 @@
 //! Supports both console and file logging based on environment variables
 
 use anyhow::{Context, Result};
-use serde::Serialize;
 use std::env;
 use std::fs;
 use std::io;

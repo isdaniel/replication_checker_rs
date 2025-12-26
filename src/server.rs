@@ -154,10 +154,15 @@ impl ReplicationServer {
         let mut reader = BufferReader::new(data);
         let _msg_type = reader.skip_message_type()?; // Skip 'k'
         let log_pos = reader.read_u64()?;
+        let _timestamp = reader.read_i64()?; // Skip timestamp
+        let reply_requested = if reader.remaining() > 0 { reader.read_u8()? } else { 0 };
 
         self.state.update_lsn(log_pos);
 
-        self.send_feedback()?;
+        // Only send feedback when server explicitly requests a reply
+        if reply_requested != 0 {
+            self.send_feedback()?;
+        }
         Ok(())
     }
 
@@ -199,7 +204,8 @@ impl ReplicationServer {
             }
         }
 
-        self.send_feedback()?;
+        // Note: Feedback is sent periodically via check_and_send_feedback()
+        // to avoid overwhelming the connection during high-volume replication
         Ok(())
     }
 
@@ -404,8 +410,14 @@ impl ReplicationServer {
             writer.bytes_written()
         };
 
-        self.connection.put_copy_data(&reply_buf[..bytes_written])?;
-        self.connection.flush()?;
+        if let Err(e) = self.connection.put_copy_data(&reply_buf[..bytes_written]) {
+            warn!("Failed to put feedback copy data: {}", e);
+            return Err(e);
+        }
+
+        if let Err(e) = self.connection.flush() {
+            warn!("Failed to flush feedback (non-fatal): {}", e);
+        }
 
         debug!("Sent feedback with LSN: {}", self.state.received_lsn);
         Ok(())

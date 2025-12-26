@@ -1,22 +1,27 @@
 # PostgreSQL Replication Checker - Rust Edition
 
-A Rust implementation of a PostgreSQL logical replication client that connects to a database, creates replication slots, and displays changes in real-time. This is a Rust port of the original C++ implementation from [https://github.com/fkfk000/replication_checker](https://github.com/fkfk000/replication_checker).
+A Rust implementation of a PostgreSQL logical replication client that connects to a database, creates replication slots, and displays changes in real-time. This project now uses the [pg-walstream](https://github.com/isdaniel/pg-walstream) library for robust PostgreSQL logical replication protocol handling.
 
->　https://www.postgresql.org/docs/current/protocol-replication.html
+Originally based on the C++ implementation from [https://github.com/fkfk000/replication_checker](https://github.com/fkfk000/replication_checker), this version leverages modern Rust async capabilities and the pg-walstream library for production-ready replication streaming.
+
+> [PostgreSQL Replication Protocol Documentation](https://www.postgresql.org/docs/current/protocol-replication.html)
 
 ## Features
 
-- **Logical Replication**: Connects to PostgreSQL as a replication client using the logical replication protocol
+- **Built on pg-walstream**: Leverages the robust [pg-walstream](https://github.com/isdaniel/pg-walstream) library for protocol handling
+- **Full Protocol Support**: Implements PostgreSQL logical replication protocol versions 1-4
+- **Streaming Transactions**: Support for streaming large transactions (protocol v2+)
+- **Automatic Retry Logic**: Built-in connection management with exponential backoff
+- **Thread-Safe LSN Tracking**: Atomic LSN feedback for proper WAL management
+- **Zero-Copy Operations**: Efficient buffer management using the `bytes` crate
 - **Real-time Change Display**: Shows INSERT, UPDATE, DELETE, TRUNCATE operations as they happen
-- **Streaming Transaction Support**: Handles both regular and streaming (large) transactions
-- **Built with libpq-sys**: Uses low-level PostgreSQL libpq bindings for maximum performance and control
+- **Graceful Shutdown**: Proper cleanup with Ctrl+C signal handling
 - **Comprehensive Logging**: Uses tracing for structured logging and debugging
 
 ## Prerequisites
 
-- PostgreSQL server with logical replication enabled (`wal_level = logical`)
+- PostgreSQL server version 14+ with logical replication enabled (`wal_level = logical`)
 - A publication created on the source database
-- libpq development libraries installed on your system
 - Rust 1.70+ with Cargo
 
 ### PostgreSQL Setup
@@ -24,7 +29,9 @@ A Rust implementation of a PostgreSQL logical replication client that connects t
 1. Enable logical replication in your PostgreSQL configuration:
    ```sql
    ALTER SYSTEM SET wal_level = logical;
-   -- Restart PostgreSQL server after this change
+   ALTER SYSTEM SET max_replication_slots = 4;
+   ALTER SYSTEM SET max_wal_senders = 4;
+   -- Restart PostgreSQL server after these changes
    ```
 
 2. Create a publication for the tables you want to replicate:
@@ -38,14 +45,15 @@ A Rust implementation of a PostgreSQL logical replication client that connects t
    ```sql
    CREATE USER replicator WITH REPLICATION LOGIN PASSWORD 'password';
    GRANT SELECT ON ALL TABLES IN SCHEMA public TO replicator;
+   GRANT USAGE ON SCHEMA public TO replicator;
    ```
 
 ## Installation
 
-> [!WARNING]
-> Please note : PostgreSQL DB version must equal or higher to version 14, more information refer to below link. 
-> * https://www.postgresql.org/docs/14/protocol-replication.html
-> * https://www.postgresql.org/docs/current/protocol-logical-replication.html#PROTOCOL-LOGICAL-REPLICATION-PARAMS
+> [!IMPORTANT]
+> PostgreSQL version must be 14 or higher. The pg-walstream library requires PostgreSQL 14+ for full protocol support.
+> * [PostgreSQL 14 Replication Protocol](https://www.postgresql.org/docs/14/protocol-replication.html)
+> * [Logical Replication Protocol](https://www.postgresql.org/docs/current/protocol-logical-replication.html)
 
 
 ### From Source
@@ -64,13 +72,11 @@ docker build -t pg_replica_rs .
 
 ### System Dependencies
 
-Make sure you have libpq development libraries installed:
+The pg-walstream library (used internally) requires libpq development libraries:
 
 **Ubuntu/Debian:**
 ```bash
-sudo apt-get install libpq-dev \
-    clang \
-    libclang-dev 
+sudo apt-get install libpq-dev clang libclang-dev 
 ```
 
 **CentOS/RHEL/Fedora:**
@@ -89,13 +95,15 @@ brew install postgresql
 
 ### Basic Usage
 
-The replication checker now uses environment variables for all configuration. You must set the `DB_CONNECTION_STRING` environment variable with a PostgreSQL connection string:
+The application uses environment variables for configuration and automatically handles connection management through pg-walstream:
 
 ```bash
-# Using environment variables (recommended approach)
+# Set required environment variables
 export DB_CONNECTION_STRING="postgresql://username:password@host:port/database?replication=database"
 export slot_name="my_slot"
 export pub_name="my_publication"
+
+# Run the application
 ./target/release/pg_replica_rs
 
 # Example with full connection string
@@ -111,10 +119,10 @@ set -a; source .env; set +a
 
 ### Connection String Format
 
-The `DB_CONNECTION_STRING` must be a valid PostgreSQL connection string with **the `replication=database` parameter for logical replication:**
+The `DB_CONNECTION_STRING` must include the `replication=database` parameter. If not present, the application will automatically add it:
 
 ```bash
-# Basic format
+# Basic format (replication parameter required)
 DB_CONNECTION_STRING="postgresql://username:password@host:port/database?replication=database"
 
 # With SSL settings  
@@ -196,23 +204,21 @@ LOG_OUTPUT=file LOG_DIRECTORY=/var/log/postgres LOG_FILE_PREFIX=replication ./ta
 When running, you'll see structured output like:
 
 ```
-2024-09-07T10:30:00.123Z INFO pg_replica_rs: Logging initialized: output=Console, json=false
-2024-09-07T10:30:00.124Z INFO pg_replica_rs: Slot name: my_slot  
-2024-09-07T10:30:00.124Z INFO pg_replica_rs: Publication name: my_publication
-2024-09-07T10:30:00.125Z INFO pg_replica_rs: Connection string: user=postgres password=*** host=localhost port=5432 dbname=testdb
-2024-09-07T10:30:00.125Z INFO pg_replica_rs: Successfully connected to database server
-2024-09-07T10:30:00.126Z INFO pg_replica_rs: System identification successful
-2024-09-07T10:30:00.127Z INFO pg_replica_rs: Creating replication slot: my_slot
-2024-09-07T10:30:00.128Z INFO pg_replica_rs: Started receiving data from database server
+2024-12-26T10:30:00.123Z INFO pg_replica_rs: Logging initialized: output=Console, json=false
+2024-12-26T10:30:00.124Z INFO pg_replica_rs: Slot name: my_slot  
+2024-12-26T10:30:00.124Z INFO pg_replica_rs: Publication name: my_publication
+2024-12-26T10:30:00.125Z INFO pg_replica_rs: Using connection string with replication enabled
+2024-12-26T10:30:00.126Z INFO pg_replica_rs: Creating logical replication stream
+2024-12-26T10:30:00.127Z INFO pg_replica_rs: Starting replication stream from latest position
+2024-12-26T10:30:00.128Z INFO pg_replica_rs: Processing replication events (Press Ctrl+C to stop)...
 
-2024-09-07T10:30:01.200Z INFO pg_replica_rs: BEGIN: Xid 12345
-2024-09-07T10:30:01.201Z INFO pg_replica_rs: table public.users: INSERT: id: 100 name: John Doe email: john@example.com 
-2024-09-07T10:30:01.202Z INFO pg_replica_rs: table public.orders: INSERT: id: 50 user_id: 100 amount: 99.99 
-2024-09-07T10:30:01.203Z INFO pg_replica_rs: COMMIT: flags: 0, lsn: 0/1A2B3C4D, end_lsn: 0/1A2B3C5D, commit_time: 2024-09-07T10:30:01.203Z
+2024-12-26T10:30:01.200Z INFO pg_replica_rs: Event: ChangeEvent { event_type: Begin { transaction_id: 12345, commit_timestamp: 2024-12-26T10:30:01Z }, lsn: Some(Lsn(0x1A2B3C00)), metadata: None }
+2024-12-26T10:30:01.201Z INFO pg_replica_rs: Event: ChangeEvent { event_type: Insert { schema: "public", table: "users", relation_oid: 16384, data: {"id": "100", "name": "John Doe", "email": "john@example.com"} }, lsn: Some(Lsn(0x1A2B3C4D)), metadata: None }
+2024-12-26T10:30:01.203Z INFO pg_replica_rs: Event: ChangeEvent { event_type: Commit { commit_timestamp: 2024-12-26T10:30:01Z }, lsn: Some(Lsn(0x1A2B3C5D)), metadata: None }
 
-2024-09-07T10:30:02.300Z INFO pg_replica_rs: BEGIN: Xid 12346
-2024-09-07T10:30:02.301Z INFO pg_replica_rs: table public.users UPDATE Old REPLICA IDENTITY: id: 100 New Row: id: 100 name: John Smith email: john.smith@example.com 
-2024-09-07T10:30:02.302Z INFO pg_replica_rs: COMMIT: flags: 0, lsn: 0/1A2B3C6D, end_lsn: 0/1A2B3C7D, commit_time: 2024-09-07T10:30:02.302Z
+2024-12-26T10:30:02.300Z INFO pg_replica_rs: Event: ChangeEvent { event_type: Begin { transaction_id: 12346, commit_timestamp: 2024-12-26T10:30:02Z }, lsn: Some(Lsn(0x1A2B3C6D)), metadata: None }
+2024-12-26T10:30:02.301Z INFO pg_replica_rs: Event: ChangeEvent { event_type: Update { schema: "public", table: "users", relation_oid: 16384, old_data: Some({"id": "100"}), new_data: {"id": "100", "name": "John Smith", "email": "john.smith@example.com"}, replica_identity: Default, key_columns: ["id"] }, lsn: Some(Lsn(0x1A2B3C7D)), metadata: None }
+2024-12-26T10:30:02.302Z INFO pg_replica_rs: Event: ChangeEvent { event_type: Commit { commit_timestamp: 2024-12-26T10:30:02Z }, lsn: Some(Lsn(0x1A2B3C8D)), metadata: None }
 ```
 
 ### JSON Log Output
@@ -277,16 +283,37 @@ The implementation consists of several well-organized modules:
 
 ## Supported Operations
 
-- **BEGIN** - Transaction start with structured logging
-- **COMMIT** - Transaction commit with LSN tracking and timestamps
-- **INSERT** - Row insertions with JSON data logging
-- **UPDATE** - Row updates (with old/new value support and change tracking)
-- **DELETE** - Row deletions with replica identity handling
-- **TRUNCATE** - Table truncation with cascade and restart identity support
+The pg-walstream library (and this application) supports all PostgreSQL logical replication message types:
+
+### Protocol Version 1 Messages
+- **BEGIN** - Transaction start with XID and timestamp
+- **COMMIT** - Transaction commit with LSN tracking and commit timestamp
+- **ORIGIN** - Replication origin tracking
 - **RELATION** - Table schema information with column metadata
-- **Streaming Transactions** - Large transaction support (protocol v2)
-- **Stream Start/Stop/Commit/Abort** - Streaming transaction lifecycle
-- **Keep-alive** - Connection health monitoring with automatic feedback
+- **TYPE** - Data type definitions
+- **INSERT** - Row insertions with full data
+- **UPDATE** - Row updates with old/new values (based on replica identity)
+- **DELETE** - Row deletions with key columns
+- **TRUNCATE** - Table truncation with cascade and restart identity options
+- **MESSAGE** - Generic logical decoding messages
+
+### Protocol Version 2+ Messages (Streaming)
+- **STREAM_START** - Streaming transaction start
+- **STREAM_STOP** - Streaming transaction segment end
+- **STREAM_COMMIT** - Streaming transaction commit
+- **STREAM_ABORT** - Streaming transaction abort
+
+### Protocol Version 3+ Messages (Two-Phase Commit)
+- **BEGIN_PREPARE** - Prepared transaction start
+- **PREPARE** - Transaction prepare
+- **COMMIT_PREPARED** - Commit prepared transaction
+- **ROLLBACK_PREPARED** - Rollback prepared transaction
+- **STREAM_PREPARE** - Stream prepare message
+
+### Additional Features
+- **Keep-alive Messages** - Connection health monitoring with automatic feedback
+- **LSN Feedback** - Automatic acknowledgment of processed WAL positions
+- **Replica Identity Support** - Handles DEFAULT, NOTHING, FULL, and INDEX modes
 
 ### Enhanced Logging System
 - **Flexible Output**: Choose between console, file, or both

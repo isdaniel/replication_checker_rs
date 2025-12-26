@@ -1,35 +1,28 @@
 //! PostgreSQL Replication Checker - Rust Edition
 //!
 //! A Rust implementation of a PostgreSQL logical replication client that connects to a database,
-//! creates replication slots, and displays changes in real-time.
+//! creates replication slots, and displays changes in real-time using pg-walstream library.
 //!
 //! Based on the C++ implementation: https://github.com/fkfk000/replication_checker
 
-mod buffer;
-mod errors;
 mod logging;
-mod parser;
-mod server;
-mod types;
-mod utils;
 
 use crate::logging::LoggingConfig;
-use crate::server::ReplicationServer;
-use crate::types::ReplicationConfig;
-use errors::Result;
 use std::env;
+use std::time::Duration;
 use tokio::signal;
 use tracing::{error, info, warn};
 
+use pg_walstream::{
+    CancellationToken, LogicalReplicationStream, ReplicationStreamConfig, RetryConfig,
+    SharedLsnFeedback,
+};
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging from environment variables
-    let logging_config = LoggingConfig::from_env()
-        .map_err(|e| crate::errors::ReplicationError::Other(e.into()))?;
-    
-    logging_config.init_logging()
-        .map_err(|e| crate::errors::ReplicationError::Other(e.into()))?;
+    let logging_config = LoggingConfig::from_env()?;
+    logging_config.init_logging()?;
 
     // Check for required environment variables
     let slot_name = env::var("slot_name").unwrap_or_else(|_| "sub".to_string());
@@ -40,47 +33,95 @@ async fn main() -> Result<()> {
 
     // Get connection string from environment variable
     let connection_string = env::var("DB_CONNECTION_STRING")
-        .map_err(|_| crate::errors::ReplicationError::MissingEnvVar("DB_CONNECTION_STRING".into()))?;
-    
-    // Create configuration with validation
-    let config = ReplicationConfig::new(connection_string, publication_name, slot_name)?;
+        .map_err(|_| "DB_CONNECTION_STRING environment variable not set")?;
 
-    // Create and run the replication server
-    match run_replication_server(config).await {
+    info!("Using connection string with replication enabled");
+
+    // Create configuration
+    let config = ReplicationStreamConfig::new(
+        slot_name,
+        publication_name,
+        2, // Protocol version 2 - supports streaming transactions
+        true, // Enable streaming for large transactions
+        Duration::from_secs(10), // Feedback interval
+        Duration::from_secs(30), // Connection timeout
+        Duration::from_secs(60), // Health check interval
+        RetryConfig::default(), // Use default retry configuration
+    );
+
+    // Run the replication stream
+    match run_replication_stream(&connection_string, config).await {
         Ok(()) => {
-            info!("Replication server completed successfully");
+            info!("Replication stream completed successfully");
             Ok(())
         }
         Err(e) => {
-            error!("Replication server failed: {}", e);
+            error!("Replication stream failed: {}", e);
             Err(e)
         }
     }
 }
 
-async fn run_replication_server(config: ReplicationConfig) -> Result<()> {
-    let mut server = ReplicationServer::new(config)?;
+async fn run_replication_stream(
+    connection_string: &str,
+    config: ReplicationStreamConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Creating logical replication stream");
+
+    // Create the replication stream
+    let mut stream = LogicalReplicationStream::new(connection_string, config).await?;
+
+    // Set up LSN feedback for tracking progress
+    let lsn_feedback = SharedLsnFeedback::new_shared();
+    stream.set_shared_lsn_feedback(lsn_feedback.clone());
+
+    info!("Starting replication stream from latest position");
+
+    // Start replication from the beginning (None = start from latest)
+    stream.start(None).await?;
+
+    // Create cancellation token for graceful shutdown
+    let cancel_token = CancellationToken::new();
+    let cancel_token_clone = cancel_token.clone();
 
     // Set up graceful shutdown handling
-    let shutdown_signal = async {
+    tokio::spawn(async move {
         signal::ctrl_c()
             .await
             .expect("Failed to install CTRL+C signal handler");
         warn!("Received interrupt signal, shutting down gracefully...");
-    };
+        cancel_token_clone.cancel();
+    });
 
-    // Run the server with shutdown handling
-    tokio::select! {
-        result = async {
-            server.identify_system()
-                .map_err(|e| crate::errors::ReplicationError::Other(e.into()))?;
-            server.create_replication_slot_and_start().await
-                .map_err(|e| crate::errors::ReplicationError::Other(e.into()))?;
-            Ok(())
-        } => result,
-        _ = shutdown_signal => {
-            info!("Graceful shutdown completed");
-            Ok(())
+    info!("Processing replication events (Press Ctrl+C to stop)...");
+
+    // Process events in a loop
+    loop {
+        if cancel_token.is_cancelled() {
+            info!("Cancellation requested, stopping stream");
+            break;
+        }
+
+        match stream.next_event(&cancel_token).await? {
+            Some(event) => {
+                // Display the received event
+                info!("Event: {:?}", event);
+
+                // Update LSN feedback after processing
+                if let Some(lsn) = event.lsn {
+                    lsn_feedback.update_applied_lsn(lsn.value());
+                }
+            }
+            None => {
+                // No event available, continue
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
         }
     }
+
+    info!("Stopping replication stream");
+    stream.stop().await?;
+    info!("Graceful shutdown completed");
+
+    Ok(())
 }

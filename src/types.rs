@@ -3,7 +3,6 @@
 
 use crate::utils::{Oid, Xid};
 use std::collections::HashMap;
-use std::time::Instant;
 
 /// Information about a table column
 #[derive(Debug)]
